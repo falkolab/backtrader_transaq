@@ -20,7 +20,7 @@ from transaqpy.commands import Ticker, SubscriptionEntity
 from transaqpy.structures import ClientAccount, ServerStatus, CandleKindPacket, CandleKind, HistoryCandlePacket, \
     HistoryCandleStatus, SecurityPacket, TradePacket, Trade, TimeDiffResult, HistoryCandle, Union as TransaqUnion, \
     MarketPacket, MultiPortfolio, PositionPacket, SecurityPosition, ClientOrderPacket, Order, StopOrder, \
-    Security, Market
+    Security, Market, TextMessagePacket
 
 logger = logging.getLogger(__name__)
 
@@ -370,7 +370,8 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
                         self.dont_reconnect = True
                         logging.warning('Unable to connect: %s', self.conn.get_connection_error())
                         return False
-                    time.sleep(0.5)
+                    logging.debug('Waiting for connected status message ...')
+                    time.sleep(1)
             except KeyboardInterrupt:
                 if is_connect_command_success:
                     self.conn.disconnect()
@@ -478,7 +479,6 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
     def account_update(self, account: ClientAccount):
         with self._lock_account_update:
             if account.active:
-                # self._accounts[account.id][account.market][account.currency] = account
                 self._accounts[account.id] = account
                 self._on_account_updated(self._accounts[account.id])
             elif account.id in self._accounts:
@@ -493,6 +493,9 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
         self._event_managed_accounts.set()
 
     def get_account(self) -> ClientAccount:
+        if len(self._accounts) == 0:
+            # API doc ch. 4.3
+            logger.debug('Waiting for client Accounts from server ...')
         self._event_managed_accounts.wait()
         return self._accounts[self._client_id]
 
@@ -630,14 +633,7 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
 
         if begindate is None:
             raise NotImplemented()
-            # return self.make_initial_ticker_queue()
 
-        # Check if the requested timeframe/compression is supported by Transaq
-
-        # durations = self._get_durations(timeframe, compression)
-        # if not durations:  # return a queue and put a None in it
-        #     return self.make_initial_ticker_queue()
-        #
         candle_kind = self.get_candle_kind(timeframe, compression)
         if reset:
             ticker_id, q = self.make_ticker_queue(ticker, candle_kind.id)
@@ -660,7 +656,6 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
                     (hparams['earliest_candle_date'] - begindate).total_seconds() / candle_kind.period
                 )
             )
-            # math.ceil(86400/candle_kind.period) if timeframe < TimeFrame.Days else 10
 
         # Store the calculated data
         self._history_params.setdefault(ticker_id, {
@@ -758,11 +753,9 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
             # todo: take in account time offset between server and client
             _, q = self.get_ticker_queue(ticker)
             if q is None:
-                # skip ticks from terminates subscription
+                # skip ticks from terminated subscription
                 pass
-                # logging.warning("Can't find queue for ticker: %s", ticker)
             else:
-                # logging.info('Trade: %s', trade.__repr__())
                 q.put(trade)
 
     def _on_unions_changed(self, union_id: str, removed=False):
@@ -801,9 +794,10 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
                     if item.ROOT_NAME == SecurityPosition.ROOT_NAME:
                         if item.client != self._client_id:
                             continue
-                        security = self._securities_bysecid[item.id]
+                        security = self._securities_bysecid.get(item.id)
+                        if security is None:
+                            continue
                         position = Position(item.saldo / security.lotsize, item.amount)
-                        # print(">>sec_position: ", item.__repr__())
                         self._positions[item.seccode] = position
 
     @transaq_handler()
@@ -819,15 +813,13 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
 
             if self._client_id != order_message.client:
                 continue
-            # print(">> order message status: ", order_message.status)
             if order_message.ROOT_NAME == Order.ROOT_NAME:
-                # print(f'>Order nums: transactionid={order_message.id}, '
-                #       f'origin_order_no={order_message.origin_order_no}, order_no="{order_message.order_no}')
-
                 self.broker.update_order(order_message)
             elif order_message.ROOT_NAME == StopOrder.ROOT_NAME:
-                # print(f'>Order nums: transactionid={order_message.id}, '
-                #       f'active_order_no={order_message.active_order_no}')
-                # order_type = StopOrderType.STOP_LOSS if isinstance(order_message, StopLoss) else StopOrderType.TAKE_PROFIT
-                # self.broker['update_' + order_type.value](order_message)
                 self.broker.update_stop_order(order_message)
+
+    @transaq_handler()
+    def messages(self, messages: TextMessagePacket):
+        for message in messages.items:
+            func = logger.warning if message.urgent else logger.info
+            func("Transaq server message from %s: %s", message.sender, message.text)

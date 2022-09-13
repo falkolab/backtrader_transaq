@@ -41,6 +41,6 @@ class Receiver:
         self.dispatcher = dispatcher
 
     def __call__(self, message: TransaqMessage):
-        #print('Receiver: ', transaq_message.__repr__())
+        # print('Receiver: ', message.__repr__())
         print('Received message: ', message.ROOT_NAME)
         self.dispatcher(message.ROOT_NAME, [message])
