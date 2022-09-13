@@ -5,7 +5,7 @@ import math
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Optional, Literal, Union, List, Dict, Tuple
+from typing import Optional, Literal, Union, List, Dict, Tuple, Callable
 
 import itertools
 import pytz
@@ -99,6 +99,7 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
     _securities: Dict[str, Security] = None
     _securities_bysecid: Dict[str, Security] = None
     _current_market: Market = None
+    _on_connect_callback: Callable = None
 
     def __init__(self, **kwargs):
         super().__init__()
@@ -506,6 +507,8 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
             self._server_timezone = win_tz.get(status_message.timezone, None)
             logging.info('Server timezone: %s', self._server_timezone)
         if status_message.is_connected:
+            if self._on_connect_callback:
+                self._on_connect_callback(status_message)
             if status_message.is_recover:
                 self._recovering_from_time_utc = datetime.utcnow()
             elif self._recovering_from_time_utc:
@@ -823,3 +826,8 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
         for message in messages.items:
             func = logger.warning if message.urgent else logger.info
             func("Transaq server message from %s: %s", message.sender, message.text)
+
+    def set_on_connect_callback(self, func: Callable):
+        if not callable(func):
+            raise Exception('Argument `func` should be callable')
+        self._on_connect_callback = func
