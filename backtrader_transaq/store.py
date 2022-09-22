@@ -356,7 +356,6 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
                         logging.warning('Retry to connect: %d/%d', self.p.reconnect - retries, self.p.reconnect)
                 last_time = datetime.now()
                 time.sleep(self.p.reconnect_timeout - interval())
-
             try:
                 # Waiting for server_status
                 while is_connect_command_success:
@@ -474,7 +473,7 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
         for m in portfolio.moneys:
             if m.currency == self.p.base_currency:
                 return m.balance
-        return None
+        return 0
 
     @transaq_handler(message_type=ClientAccount.ROOT_NAME)
     def account_update(self, account: ClientAccount):
@@ -514,9 +513,13 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
             elif self._recovering_from_time_utc:
                 self._recover()
                 self._recovering_from_time_utc = None
-        elif not status_message.is_connected and not status_message.is_error and not status_message.is_recover:
-            # diconected
-            logging.warning('Store has been disconnected at: %s', datetime.now())
+        else:
+            if status_message.is_error:
+                logger.error('Connection error: %s', status_message.text)
+            elif status_message.is_recover:
+                logger.warning('Connection recovering ...')
+            else:
+                logging.warning('Store has been disconnected')
         if status_message.is_connected and not status_message.is_recover:
             self.synchronize_time()
 
