@@ -1,5 +1,6 @@
-#from backtrader_transaq.message import wrapper_methods
+import logging
 from transaqpy.structures import TransaqMessage
+logger = logging.getLogger(__name__)
 
 
 def make_message_method(name, parameters):
@@ -29,8 +30,6 @@ class ReceiverType(type):
         @param namespace dictionary with namespace for new type
         @return generated type
         """
-        #for method_name, method_args in wrapper_methods:
-         #   namespace[method_name] = make_message_method(method_name, method_args)
         return type(name, bases, namespace)
 
 
@@ -42,5 +41,5 @@ class Receiver:
 
     def __call__(self, message: TransaqMessage):
         # print('Receiver: ', message.__repr__())
-        print('Received message: ', message.ROOT_NAME)
+        logger.debug('Received message: ', message.ROOT_NAME)
         self.dispatcher(message.ROOT_NAME, [message])

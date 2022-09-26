@@ -80,7 +80,8 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
         ('market', 'ММВБ'),
         ('union', None),
         ('push_pos_equity', 15),
-        ('time_diff_adjustment', 0)
+        ('time_diff_adjustment', 0),
+        ('position_register', 'Y2'),
     )
 
     _recovering_from_time_utc = None
@@ -702,6 +703,8 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
         candle_count = 0
 
         for candle in reversed(candles.items):
+            if hparams is None:
+                continue
             candle: HistoryCandle
             if candle.date < hparams['begindate']:
                 stop_load_history()
@@ -798,8 +801,10 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
             with self._lock_positions:
                 for item in packet.items:
                     if item.ROOT_NAME == SecurityPosition.ROOT_NAME:
-                        if item.client != self._client_id:
+                        if item.client != self._client_id or \
+                                self.p.position_register is not None and item.register != self.p.position_register:
                             continue
+
                         security = self._securities_bysecid.get(item.id)
                         if security is None:
                             continue
@@ -814,7 +819,7 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
     def orders(self, orders: ClientOrderPacket):
         for order_message in orders.items:
             if self.broker is None:
-                logger.warning("order was received before broker set: %s", order_message.__repr__())
+                logger.warning("order has been received before broker set: %s", order_message.__repr__())
                 continue
 
             if self._client_id != order_message.client:
