@@ -352,7 +352,7 @@ class TransaqData(with_metaclass(MetaTransaqData, DataBase)):
 
     def _load_trade(self, trade: TransaqTrade):
         logger.debug('Adding trade for %s: %s', self._dataname, trade.__repr__())
-        dt = date2num(trade.time)
+        dt = date2num(trade.time, tz=self._tz)
         if dt < self.lines.datetime[-1] and not self.p.latethrough:
             return False  # cannot deliver earlier than already delivered
         self.lines.datetime[0] = dt
@@ -368,7 +368,7 @@ class TransaqData(with_metaclass(MetaTransaqData, DataBase)):
 
     def _load_hbar(self, candle: HistoryCandle):
         logger.debug('Adding hbar for %s: %s', self._dataname, candle.__repr__())
-        dt = date2num(candle.date)
+        dt = date2num(candle.date, tz=self._tz)
         if dt < self.lines.datetime[-1] and not self.p.latethrough:
             return False  # cannot deliver earlier than already delivered
         self.lines.datetime[0] = dt
