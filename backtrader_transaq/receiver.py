@@ -41,5 +41,5 @@ class Receiver:
 
     def __call__(self, message: TransaqMessage):
         # print('Receiver: ', message.__repr__())
-        logger.debug('Received message: ', message.ROOT_NAME)
+        logger.debug('Received message: %s', message.ROOT_NAME)
         self.dispatcher(message.ROOT_NAME, [message])

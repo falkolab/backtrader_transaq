@@ -6,6 +6,10 @@
 Пример:
 
 ```python
+    from backtrader_transaq.store import TransaqStore
+    import os
+    from transaqpy.grpc_connector.connector import GRPCTransaqConnector
+
     # Sending command implemented directly in client
     connector = GRPCTransaqConnector(os.environ['GRPC_SERVER'])
     client_id = os.getenv('STORE_CLIENT', default=None)
@@ -29,6 +33,7 @@
          print(result.__repr__())
     
     store.set_on_connect_callback(change_password_callback)
+    store.reconnect()
     # Либо можно вызвать любую другую команду (см. transaqpy.commands для справки)
     # store.conn.send_command(CommandMaker('change_pass', oldpass=old_password, newpass=new_password))
 ```
