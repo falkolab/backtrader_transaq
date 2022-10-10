@@ -4,7 +4,7 @@ from setuptools import find_packages, setup
 setup(
     name='backtrader_transaq',
     packages=find_packages(),
-    version='0.1.1',
+    version='0.1.2',
     description='Transaq connector integration for backtrader',
     author='Andrey Tkachenko',
     author_email='falko.lab@gmail.com',

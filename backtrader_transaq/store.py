@@ -81,7 +81,6 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
         ('union', None),
         ('push_pos_equity', 15),
         ('time_diff_adjustment', 0),
-        ('position_register', 'Y2'),
     )
 
     _recovering_from_time_utc = None
@@ -692,6 +691,9 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
 
         def stop_load_history():
             hparams_ = self._history_params.pop(ticker_id, None)
+            if hparams_ is None:
+                # Похоже приходят свечи с предыдущей сессии
+                return
             s_ = hparams_.get('stack', [])
             s_[0].stop_marker = True
             while len(s_):
@@ -792,8 +794,19 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
         logger.info('Markets: %s', ", ".join([str(id) + ': ' + (name or '') for id, name in self._markets.items()]))
 
     def get_position(self, ticker: Ticker):
+        self.request_profile_updates(subscribe=False)
+        portfolio = self.get_portfolio()
+        for item in portfolio.securities:
+            security = self._securities_bysecid.get(item.id)
+            if security is None or security.board != ticker.board or \
+                    security.seccode != ticker.seccode:
+                continue
+            return Position(price=item.equity, size=int(item.balance/security.lotsize))
+        return Position()
+
+    def get_positions(self):
         with self._lock_positions:
-            return self._positions[ticker.seccode]
+            return self._positions
 
     @transaq_handler(message_type='positions')
     def update_positions(self, packet: PositionPacket):
@@ -801,10 +814,8 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
             with self._lock_positions:
                 for item in packet.items:
                     if item.ROOT_NAME == SecurityPosition.ROOT_NAME:
-                        if item.client != self._client_id or \
-                                self.p.position_register is not None and item.register != self.p.position_register:
+                        if item.client != self._client_id:
                             continue
-
                         security = self._securities_bysecid.get(item.id)
                         if security is None:
                             continue
