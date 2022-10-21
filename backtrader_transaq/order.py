@@ -42,7 +42,7 @@ class TransaqOrder(OrderBase):
             # self.tq_parent_id = self.parent.m_orderId
 
         params = {key: kwargs[key] for key in (
-            'brokerref', 'usecredit', 'expdate', 'union', 'stoploss', 'takeprofit'
+            'brokerref', 'usecredit', 'expdate', 'union', 'stoploss', 'takeprofit',
         ) if key in kwargs.keys()}
 
         self.tq_params = params
@@ -73,18 +73,18 @@ class TransaqOrder(OrderBase):
             params['command'] = 'new_sl_tp_order'
             sl_params = params.setdefault('stoploss', {})
             for key in ('bymarket', 'usecredit', 'quantity', 'guardtime', 'brokerref', 'activationprice'):
-                if key in params:
-                    sl_params.setdefault(key, params.pop(key))
+                if key in kwargs:
+                    sl_params.setdefault(key, kwargs.pop(key))
 
-            if 'activationprice' not in sl_params:
-                sl_params['activationprice'] = self.p.price
+            # if 'activationprice' not in sl_params:
+            #     sl_params['activationprice'] = self.price
 
         if self.exectype == self.Limit or 'takeprofit' in params:
             params['command'] = 'new_sl_tp_order'
             tp_params = params.setdefault('takeprofit', {})
             for key in ('bymarket', 'usecredit', 'quantity', 'guardtime', 'brokerref', 'correction', 'spread'):
-                if key in params:
-                    tp_params.setdefault(key, params.pop(key))
+                if key in kwargs:
+                    tp_params.setdefault(key, kwargs.pop(key))
 
         if self.exectype == self.Market:
             params['bymarket'] = True
@@ -102,6 +102,7 @@ class TransaqOrder(OrderBase):
             sl_params.update(
                 activationprice=self.price,  # Цена активации
                 bymarket=True,
+                quantity=abs(int(params.pop('quantity')))
             )
         elif self.exectype == self.StopLimit:
             # Только stoploss заявка позволяет выставить лимитированную заявку
@@ -109,18 +110,11 @@ class TransaqOrder(OrderBase):
             sl_params.update(
                 activationprice=self.price,  # Цена активации
                 orderprice=params.pop('pricelimit'),  # Цена заявки
-                bymarket=False
+                bymarket=False,
+                quantity=abs(int(params.pop('quantity')))
             )
         elif self.exectype == self.StopTrail:
             raise NotImplemented
-            # params['command'] = 'new_sl_tp_order'
-            # params['bymarket'] = True
-            # correction = kwargs.get('trailamount', None)
-            # if correction is None:
-            #     correction = kwargs.get('trailpercent')
-            #     correction = str(correction * 100) + '%'
-            # params['correction'] = correction
-            # params['ordertype'] = StopOrderType.TAKE_PROFIT
         elif self.exectype == self.StopTrailLimit:
             pass
         elif self.exectype == self.Close:
@@ -129,14 +123,10 @@ class TransaqOrder(OrderBase):
         stoploss = params.pop('stoploss', {})
         takeprofit = params.pop('takeprofit', {})
 
-        if stoploss:
-            stoploss['quantity'] = abs(int(stoploss['quantity']))
-        if takeprofit:
-            takeprofit['quantity'] = abs(int(takeprofit['quantity']))
-
-        if stoploss and stoploss['quantity'] != self.size \
-                or takeprofit and takeprofit['quantity'] != self.size:
-            # Чтобы не вводить в заблуждение
+        if stoploss and stoploss['quantity'] != abs(self.size) \
+                or takeprofit and takeprofit['quantity'] != abs(self.size):
+            # Значение size может быть разное для stoploss и takeprofit
+            # Установим в None чтобы не вводить в заблуждение
             self.size = None
 
         params.update({'sl_' + k: v for k, v in stoploss.items()})
