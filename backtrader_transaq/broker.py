@@ -1,6 +1,5 @@
 import collections
-from typing import Optional, Union
-
+import logging
 from backtrader import BrokerBase, Order
 from backtrader.utils.py3 import with_metaclass, queue
 from backtrader_transaq.data import TransaqData
@@ -9,6 +8,8 @@ from backtrader_transaq.store import TransaqStore
 from transaqpy.commands import BuySellAction
 from transaqpy.structures import \
     Order as TqOrder, OrderStatus as TransaqOrderStatus, BaseOrder as TqBaseOrder, StopOrder
+
+logger = logging.getLogger(__name__)
 
 
 class MetaFinamBroker(BrokerBase.__class__):
@@ -128,8 +129,9 @@ class TransaqBroker(with_metaclass(MetaFinamBroker, BrokerBase)):
         return order
 
     def transmit(self, order):
-        success, transactionid = self._store.place_order(order)
+        success, transactionid, message = self._store.place_order(order)
         if not success:
+            logger.warning('Не удалось поместить заявку: %s', message)
             return None
         self._orderbyid[transactionid] = order
         order.tq_id = transactionid
