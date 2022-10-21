@@ -246,7 +246,7 @@ class TransaqData(with_metaclass(MetaTransaqData, DataBase)):
 
     def _load(self):
         if self.ticker is None or self._state == FeedState.OVER:
-            logger.debug('Nothing can be done')
+            logger.debug('Nothing can be done to load')
             return False  # nothing can be done
 
         while True:
@@ -309,7 +309,6 @@ class TransaqData(with_metaclass(MetaTransaqData, DataBase)):
 
             elif self._state == FeedState.HISTORY_BACK:
                 message = self._qhist.get()
-                #print('>>HISTORY_BACK: ', message)
                 message: HistoryCandle
                 if message is None:  # Conn broken during historical/backfilling
                     # Situation not managed. Simply bail out
@@ -333,7 +332,8 @@ class TransaqData(with_metaclass(MetaTransaqData, DataBase)):
 
                 # Live is also wished - go for it
                 self._state = FeedState.LIVE
-                continue
+                # will move data forward to last loaded candle
+                return True
             elif self._state == FeedState.FROM:
                 if not self.p.backfill_from.next():
                     # additional data source is consumed
