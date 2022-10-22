@@ -1,6 +1,10 @@
 import collections
+import decimal
 import inspect
 import logging
+import traceback
+from decimal import Decimal
+
 import math
 import threading
 from dataclasses import dataclass
@@ -84,7 +88,6 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
     )
 
     _recovering_from_time_utc = None
-    _initial_data_loading: bool = True
     _candle_kinds: List[CandleKind] = None
     _server_timezone = None
     _timediff = None
@@ -318,14 +321,17 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
         :param resubscribe_datas:
         :return:
         """
+        logger.debug('store.reconnect: is_online=%s, is_connected=%s, is_recovering=%s, dont_reconnect=%s',
+                     self.is_online, self.is_connected, self.is_recovering, self.dont_reconnect
+                     )
         with self._lock_connect:
-            if self.is_connected:
+            if self.is_online:
                 if resubscribe_datas:
                     self.start_datas()
                 return True
 
             if self.dont_reconnect:
-                return self.is_connected
+                return self.is_online
 
             is_connect_command_success = False
             retries = self.p.reconnect
@@ -336,8 +342,8 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
                 sec = (datetime.now() - last_time).total_seconds()
                 return max(0.0, sec)
 
-            logging.info('Connecting...')
-            while (retries < 0 or retries) and not self.is_connected:
+            logging.info('Начинаем соединение...')
+            while (retries < 0 or retries) and not self.is_online:
                 if last_time is None or interval() >= self.p.reconnect_timeout:
                     if retries > 0:
                         retries = max(0, retries - 1)
@@ -350,10 +356,10 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
                         # It's ok, we've sent the command successfully.
                         # And we need to wait for the appropriate status message
                         break
-                    logging.info('Connection failed!')
+                    logging.info('Не удалось соединиться!')
 
                     if retries > 0:
-                        logging.warning('Retry to connect: %d/%d', self.p.reconnect - retries, self.p.reconnect)
+                        logging.warning('Попытка переподключиться: %d/%d', self.p.reconnect - retries, self.p.reconnect)
                 last_time = datetime.now()
                 time.sleep(self.p.reconnect_timeout - interval())
             try:
@@ -361,16 +367,16 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
                 while is_connect_command_success:
                     # todo: need to find better solution
                     # ожидаем обработку сообщения статуса об успешном соединении в клиенте
-                    if self.is_connected:
+                    if self.is_online:
                         if not from_start or resubscribe_datas:
                             self.start_datas()
-                        logging.info('Connected at: %s', datetime.now())
+                        logging.info('Успешно подключились: %s', datetime.now())
                         return True
                     elif self.conn.is_connection_error:
                         self.dont_reconnect = True
-                        logging.warning('Unable to connect: %s', self.conn.get_connection_error())
+                        logging.warning('Не можем подключиться: %s', self.conn.get_connection_error())
                         return False
-                    logging.debug('Waiting for connected status message ...')
+                    logging.debug('Ожидаем статус соединения ...')
                     time.sleep(1)
             except KeyboardInterrupt:
                 if is_connect_command_success:
@@ -501,27 +507,38 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
 
     @transaq_handler()
     def server_status(self, status_message: ServerStatus):
-        self._initial_data_loading = not status_message.is_connected
         if hasattr(status_message, 'timezone'):
             self._server_timezone = win_tz.get(status_message.timezone, None)
-            logging.info('Server timezone: %s', self._server_timezone)
+            logging.info('Таймзона сервера: %s', self._server_timezone)
         if status_message.is_connected:
             if self._on_connect_callback:
                 self._on_connect_callback(status_message)
             if status_message.is_recover:
-                self._recovering_from_time_utc = datetime.utcnow()
+                self._recovering_from_time_utc = datetime.now()
+                logger.warning('Соединение потеряно, пытаемся восстановить...')
             elif self._recovering_from_time_utc:
-                self._recover()
+                logger.warning('Соединение восстановлено, продолжаем...')
+                self._after_recover()
                 self._recovering_from_time_utc = None
         else:
+            self.dont_reconnect = False
             if status_message.is_error:
-                logger.error('Connection error: %s', status_message.text)
+                self.on_connection_error(status_message.text)
             elif status_message.is_recover:
-                logger.warning('Connection recovering ...')
+                logger.warning('Восстановление соединения на этапе подключения...')
             else:
-                logging.warning('Store has been disconnected')
+                if self._recovering_from_time_utc is not None:
+                    self.on_recover_failed()
+
         if status_message.is_connected and not status_message.is_recover:
             self.synchronize_time()
+
+    def on_recover_failed(self):
+        self._recovering_from_time_utc = None
+        logging.warning('Не удалось восстановить соединение')
+
+    def on_connection_error(self, error: str):
+        logger.error('Ошибка, сервер ответил при попытке соединения: %s', error)
 
     @transaq_handler(message_type=CandleKindPacket.ROOT_NAME)
     def candle_kinds(self, cc: CandleKindPacket):
@@ -548,8 +565,12 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
                     self._securities.pop(ticker.id, None)
                     self._securities_bysecid.pop(s.id, None)
 
-    def _recover(self):
-        raise NotImplemented
+    def get_security(self, ticker: Ticker):
+        return self._securities.get(ticker.id, None)
+
+    def _after_recover(self):
+        pass
+        #raise NotImplemented
 
     def request_market_data(self, ticker: Ticker):
         _, q = self.make_ticker_queue(ticker)
@@ -609,13 +630,12 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
             return self._time_offset
 
     def place_order(self, order):
+        self._validate_order_prices(order)
         params = order.tq_params.copy()
-        # params.pop('client')
-        # union = self._union
         command = params.pop('command')
         func = getattr(self.conn, command)
         result = func(**params)
-        return result.success, result.id
+        return result.success, result.id, result.text
 
     def cancel_order(self, transaction_id: str):
         response = self.conn.cancel_order(transaction_id)
@@ -624,6 +644,39 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
     def cancel_stoporder(self, transaction_id: str):
         response = self.conn.cancel_stoporder(transaction_id)
         return response.success, response.text
+
+    def adjust_price(self, ticker: Ticker, price: float, round_up=False):
+        security: Security = self.get_security(ticker)
+        #step_price = (security.point_cost * security.minstep * math.pow(10, security.decimals))
+        return float(Decimal(price).quantize(
+            Decimal(str(security.minstep)), rounding=decimal.ROUND_HALF_UP if round_up else decimal.ROUND_HALF_DOWN)
+        )
+
+    def _validate_order_prices(self, order):
+        ticker = order.p.data.trade_ticker
+        message = 'Необходимо учитывать минимальный шаг инструмента'
+        if order.price is not None:
+            if not self._validate_price(ticker, order.price):
+                raise AttributeError(
+                    f'{message}, order.price={order.price}',
+                )
+
+        if order.pricelimit is not None:
+            if not self._validate_price(ticker, order.pricelimit):
+                raise AttributeError(
+                    f'{message}, order.pricelimit={order.limitprice}'
+                )
+
+        for param in ('sl_activationprice', 'sl_orderprice', 'tp_activationprice'):
+            if param in order.tq_params:
+                price = order.tq_params[param]
+                if not self._validate_price(ticker, price):
+                    raise AttributeError(
+                        f'{message}, order.tq_params["{param}"]={price}',
+                    )
+
+    def _validate_price(self, ticker: Ticker, price: float):
+        return price == self.adjust_price(ticker, price)
 
     def request_history_data(self, ticker: Ticker, timeframe: TimeFrame,
                              enddate: datetime, begindate: datetime,
@@ -801,7 +854,7 @@ class TransaqStore(with_metaclass(MetaSingleton, object)):
             if security is None or security.board != ticker.board or \
                     security.seccode != ticker.seccode:
                 continue
-            return Position(price=item.equity, size=int(item.balance/security.lotsize))
+            return Position(price=item.balance_prc, size=int(item.balance/security.lotsize))
         return Position()
 
     def get_positions(self):
